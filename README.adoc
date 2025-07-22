@@ -1,0 +1,253 @@
+= CMake sanitizers
+Using CMake will let you use sanitizer, in order (for instance) to detecting memory leaks, or memory issues in your code upon runtime. After the compilation itself.
+
+:toc:
+:sectnums:
+:imagesdir: ./assets/images/
+
+== Intoduction
+NOTE: Sanitizer is a tool that let you check your memory, if there are any memory issues or pointar access invalid in runtime of course.
+
+IMPORTANT: CMake sanitizer can process your code upon compiling in order to detect issues that can arises while running it, and everything can be happening before compiling your code.
+
+== Tools for sanitizer
+In order to use CMake at full-scale, you will have 3 tools that CMake provides:
+
+. Clang-tidy being a static linter (before compiling), a tool that lets you problem *BEFORE* even compiling the project.
+. Compile time issues 
+. Sanitizers at runtime
+
+NOTE: These tools are tool that can be used in order to have a code more safe, and also helps you to find bugs.
+
+== Enable sanitizer
+Before using the sanitizer, we need to create an `option` command in your CMake root that enable the sanitizer or not:
+
+```cmake
+option(ENABLE_ADDRESS_SANITIZER "Enable address sanitizer" ON)
+option(ENABLE_UNDEFINED_SANITIZER "Enable undefined sanitier" ON)
+```
+
+NOTE: These tools of sanitizers depends on the compiler you are using, for instance, if you are using MSVC, only the address sanitizer is implemented !
+
+So these `òptions` command can be triggered as a `ON` or `OFF` value, and in case of it's `ON`, the following happens:
+
+```cmake
+if (ENABLE_ADDRESS_SANITIZER OR ENABLE_UNDEFINED_SANITIZER)
+    include(Sanitizers)
+endif()
+```
+
+So in case one of both sanitizers is available, we are including the `Sanitizerd.cmake` file that will be contains the Sanitizers:
+
+== Sanitizers.cmake
+In order to implement the `Sanitizers.cmake` file, you should take the following file:
+
+```cmake
+function(add_sanitizer_flags)
+    if (NOT ${ENABLE_ADDRESS_SANITIZER} AND NOT ${ENABLE_UNDEFINED_SANITIZER})
+        message(STATUS "No sanitizers actived !")
+        return()
+    endif()
+
+    if (CMAKE_CXX_COMPILER_ID MATCHES "CLANG" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        add_compile_options("-fno-omit-frame-pointer")
+        add_link_options("-fno-omit-frame-pointer")
+
+        if (${ENABLE_ADDRESS_SANITIZER})
+            add_compile_options("-fsanitize=address")
+            add_link_options("-fsanitize=address")
+        endif()
+
+        if (${ENABLE_UNDEFINED_SANITIZER})
+            add_compile_options("-fsanitize=undefined")
+            add_link_options("-fsanitize=undefined")
+        endif()
+    elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+        if (${ENABLE_ADDRESS_SANITIZER})
+            add_compile_options("/fsanitize=address")
+        endif()
+
+        if (${ENABLE_UNDEFINED_SANITIZER})
+            message(STATUS "Undefined sanitizer not impl. for MSVC")
+        endif()
+    else
+        message(ERROR "Compiler not supported for Sanitizers")
+    endif()
+
+    target_compile_options(${TARGET} PRIVATE ${WARNINGS})
+    message(STATUS ${WARNINGS})
+
+endfunction()
+```
+The function passed above is the implementation of the sanitizer for GNU/CLANG/MSVC, which is looking like the same file as `Warnings.cmake` but with usage of the `add_compile_options` and `add_link_options`.
+
+IMPORTANT: Once you've implemented the above function, you'll now be able to run it in the root `CMakeLists.txt` file:
+
+```cmake
+if (ENABLE_ADDRESS_SANITIZER OR ENABLE_UNDEFINED_SANITIZER)
+    include(Sanitizers)
+    add_sanitizer_flags()
+endif()
+```
+
+== Example of sanitizer usage
+
+NOTE: So now we have the possibility to either enable or disable the sanitizer. However, what can we do with it ?
+
+Go to your main.cpp from the `app` for example:
+```cpp
+int main() {
+    std::cout   << project_name << std::endl
+                << project_version_major << "." << project_version_minor << "." << project_version_patch << std::endl;
+
+    std::cout   << "JSON Lib version:"
+                << NLOHMANN_JSON_VERSION_MAJOR << "."
+                << NLOHMANN_JSON_VERSION_MINOR << "."
+                << NLOHMANN_JSON_VERSION_PATCH << "."
+                << std::endl;
+    print_hello_world();
+    return EXIT_SUCCESS;
+}
+
+```
+Then add an array of int like so:
+```cpp
+int main() {
+    std::cout   << project_name << std::endl
+                << project_version_major << "." << project_version_minor << "." << project_version_patch << std::endl;
+
+    int x[2];
+    x[2] = 1337
+
+```
+As you can see, we declare an array of 2 elements, and we initialize the value at index `2` to be of value 1337. *HOWEVER* that's not supposed to work.
+
+The following code:
+```cpp
+int x[2];
+x[2] = ???
+```
+shall return an undefined behavior, and that's kind of tricky to find it in case of your code being a way too big. So it should return an undefined behavior.
+
+But, when you're compiling your application, it works fine because the compiler isn't looking for such kind of things.
+
+=== Advantage of sanitizer
+If you aren't using the sanitizer, you may come across a problem like this one, however, you might not have all the clues that the sanitizer will show you once he'll pass through that line, you should see something like this:
+
+image::address_sanitizer_example.png[]
+
+So as we saw above, we are making use of the sanitizer of the compiler directly, a sanitizer for GCC or MSVC, still, there is one that is good and that can be used everywhere that is `Clang-tidy`.
+
+== Clang-Tidy
+Clang-tidy is a link:https://clang.llvm.org/docs/LibTooling.html[LibTooling]-based tool, and it's easier to work with if your set up a compile command database for your project (for instance of how to do this, see link:https://clang.llvm.org/docs/HowToSetupToolingForLLVM.html[How To Setup Tooling For LLVM]. You can also specify compilation options on the command line after `--`
+
+```shell
+$ clang-tidy test.cpp -- -Imy_project/include -DMY_DEFINES ...
+```
+If there are too many options or source files to specify on the command line, you can store them in a parameter file, and then use `clang-tidy` with that parameter file:
+```cmake
+$ clang-tidy @parameter_file
+```
+
+NOTE: `Clang-tidy` has its own checks and can alwo run Clang Static Analizer checks. Each check has a name and the checks to run can be chosen using the `-checks=options`, which specifies a comma-separated list of positive and negative (prefixed with a `-`) globs. Positive globs add subsets of checks, and negative ones remove them. For example:
+
+```shell
+$ clang-tidy test.exe --checks=-*,clang-analyzer-*,-clang-analyzer=cplusplus*.
+```
+
+NOTE: This command will disable default checks (`-*`) and enabe all `clang-analyzer-*` checks except for `clang-analyzer-cplusplus*` ones.
+
+=== Enable Clang-tidy
+In order to use the Clang-tidy in your CMake, we can use one CMake function that is already created:
+
+NOTE: The first thing that needs to be activated is the Link Time Optimization compilation process.
+
+==== Example of LTO
+The following example illustrates the advantages of LTO's integrated approach and clean interface. This example requires a system linker which supports LTO through the interface describe in the following code. Here, clang transparently invokes system linker.
+
+* Input source file `a.cpp` is compiled into LLVM bitcode form.
+* Input source file `main.cpp` is compiled into native object code.
+
+```cpp
+--- a.h ---
+extern int foo1(void);
+extern void foo2(void);
+extern void foo4(void);
+
+--- a.c ---
+#include "a.h"
+
+static signed int i = 0;
+
+void foo2(void) {
+  i = -1;
+}
+
+static int foo3() {
+  foo4();
+  return 10;
+}
+
+int foo1(void) {
+  int data = 0;
+
+  if (i < 0)
+    data = foo3();
+
+  data = data + 42;
+  return data;
+}
+
+--- main.c ---
+#include <stdio.h>
+#include "a.h"
+
+void foo4(void) {
+  printf("Hi\n");
+}
+
+int main() {
+  return foo1();
+}
+```
+Indeed we can compile it and run it using clang like this:
+```shell
+$ clang -flto -c a.c -o a.o        # <-- a.o is LLVM bitcode file
+$ clang -c main.c -o main.o        # <-- main.o is native object file
+$ clang -flto a.o main.o -o main   # <-- standard link command with -flto
+```
+But we can do it using CMake, and the first step is going to be create a new file in your `cmake` directory named `LTO.cmake` that contains the following:
+```cmake
+# Since CMake 3.9, its almost predefined by CMake to enable this for certain compilers.
+function(target_enable_lto TARGET ENABLE)
+    if (NOT ${ENABLE})
+        return()
+    endif()
+
+    # Same LTO but smaller than before, this include avoid
+    # hundreds of lines of configurations !
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT result OUTPUT output)
+
+    if (result)
+        message(STATUS "LPO/LTO is supported !")
+        set_property(TARGET ${TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION ${ENABLE})
+    else()
+        message(WARNING "IPO/LTO isn't supported !")
+    endif()
+endfunction(target_enable_lto)
+```
+In the main `CMakeLists.txt` we will also create a new option like the following:
+```cmake
+option(ENABLE_LTO "Enable Clang LTO" ON)
+...
+if (ENABLE_LTO)
+    include(LTO)
+endif()
+```
+Then you can call this method on specific `CMakeLists.txt`, such as the lib or the executable, just add the followings into it:
+```cmake
+if (${ENABLE_LTO})
+    target_enable_lto(${LIBRARY_NAME} ${ENABLE_LTO})
+endif()
+```
